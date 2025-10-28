@@ -5,152 +5,137 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>宝宝 我想你了</title>
 <style>
-  :root{ --gap:12px; }
   html,body,#stage{height:100%;margin:0}
   #stage{
     position:relative;overflow:hidden;background:#111;
-    padding: env(safe-area-inset-top) env(safe-area-inset-right)
-             env(safe-area-inset-bottom) env(safe-area-inset-left);
+    padding:env(safe-area-inset-top) env(safe-area-inset-right)
+            env(safe-area-inset-bottom) env(safe-area-inset-left);
+    touch-action:manipulation;
   }
   .card{
-    position:absolute;border-radius:18px;background:#ffd;color:#222;
+    position:absolute;border-radius:18px;background:#ffd1dc;color:#5a2a2a;
     display:flex;align-items:center;justify-content:center;text-align:center;
     box-shadow:0 6px 18px rgba(0,0,0,.25);padding:8px;word-break:break-word;
-    will-change: transform;
-    /* 宽高/字体和动画参数由 JS 动态设置 */
-    animation-name: floatY;
-    animation-timing-function: ease-in-out;
-    animation-iteration-count: infinite;
-    animation-direction: alternate;
+    will-change:transform;white-space:nowrap;
+    animation-name:floatY;animation-timing-function:ease-in-out;
+    animation-iteration-count:infinite;animation-direction:alternate;
+    transform:translate3d(-50%,-50%,0); /* 以中心点定位 */
   }
   @keyframes floatY{
-    from { transform: translate3d(0, 0, 0) }
-    to   { transform: translate3d(0, var(--amp, -10px), 0) } /* --amp 由 JS 设置，带单位 */
+    from{ transform:translate3d(-50%,-50%,0) }
+    to  { transform:translate3d(-50%,calc(-50% + var(--amp, -10px)),0) }
   }
 </style>
 </head>
 <body>
 <div id="stage"></div>
 <script>
-/* ====== 可调参数 ====== */
-const MESSAGES = ["我想你了"];
-const COLORS   = ["#FFE4C4","#FFDEAD","#FFDAB9","#E6E6FA","#D8BFD8","#E0FFFF","#AFEEEE","#B0E0E6","#F0FFF0","#F5FFFA","#FFFACD","#F0E68C","#E6FFE6","#E0F7FA","#FCE4EC","#E8EAF6","#FFF0F5","#FFF8E1"];
-let   INTERVAL = 200; // 每隔多少毫秒弹一个（150~300 比较稳）
-const GAP = 12;       // 卡片间距（px）
-
-// 飘动参数（每张卡片随机一个范围）
-const FLOAT_AMP_MIN = 6;   // 最小幅度(px)
-const FLOAT_AMP_MAX = 14;  // 最大幅度(px)
-const FLOAT_DUR_MIN = 3.0; // 最短周期(s)
-const FLOAT_DUR_MAX = 6.0; // 最长周期(s)
-/* ===================== */
+/* ===== 可调参数 ===== */
+const MESSAGES = [
+  "宝宝 我想你了"
+];
+// 粉色系（从浅到深，不同饱和度）
+const PINKS = [
+  "#fff0f5","#ffe4ec","#ffd6e7","#ffc6db","#ffb3cf","#ffa0c4",
+  "#ff8fb8","#ff7dad","#ff6aa1","#ff578f","#ff437e","#ff2e6f"
+];
+let   INTERVAL = 200;     // 每隔多少毫秒出现一个
+const COUNT    = 40;      // 想出现多少张卡片（沿心形曲线均匀取点）
+const JITTER   = 10;      // 每个点的随机抖动像素（允许轻微重叠）
+/* 漂浮动画参数（每张卡片随机） */
+const AMP_MIN=6, AMP_MAX=14, DUR_MIN=3.0, DUR_MAX=6.0;
+/* ==================== */
 
 const stage = document.getElementById('stage');
-const sw = () => stage.clientWidth;
-const sh = () => stage.clientHeight;
+const sw = ()=>stage.clientWidth, sh = ()=>stage.clientHeight;
 
-/** 计算自适应布局参数 */
-function layoutConfig(){
-  const W = sw(), H = sh();
-
-  // 目标列数
-  let colsWanted = 2;               // 手机竖屏
-  if (W >= 430) colsWanted = 3;     // 大屏手机/横屏
-  if (W >= 768) colsWanted = 4;     // 平板
-  if (W >= 1024) colsWanted = 5;    // 桌面
-
-  // 卡片宽高 & 字体
-  const cardW = Math.floor((W - GAP * (colsWanted + 1)) / colsWanted);
-  const cardH = Math.max(56, Math.round(cardW * 0.27)); // 比例 ~ 260:70
-  const font  = Math.max(12, Math.round(cardW * 0.055));
-
-  // 行列
-  const rows = Math.max(1, Math.floor((H - GAP) / (cardH + GAP)));
-  const cols = colsWanted;
-
-  // 起始偏移（纵向尽量居中）
-  const originX = GAP;
-  const originY = Math.max(GAP, Math.floor((H - rows*(cardH+GAP) + GAP)/2));
-
-  // 轻微抖动
-  const jx = Math.floor(cardW * 0.06);
-  const jy = Math.floor(cardH * 0.12);
-
-  return {cardW, cardH, font, rows, cols, originX, originY, jx, jy};
+/* 根据屏幕计算卡片大小与字体（相对缩放，适配手机/平板） */
+function cardMetrics(){
+  const m = Math.min(sw(), sh());
+  const w = Math.max(90, Math.min(140, Math.round(m*0.28))); // ~页面短边的28%，夹在90~140之间
+  const h = Math.max(36, Math.round(w*0.3));
+  const f = Math.max(12, Math.round(w*0.15));                // 字体随宽度
+  return {w,h,f};
 }
 
-let cfg = layoutConfig();
-let positions = [];
-let timer = null;
+/* 心形曲线（经典参数式）并归一化到屏幕中心 */
+function heartPositions(n){
+  // 心形参数方程：
+  // x = 16 sin^3 t
+  // y = 13 cos t - 5 cos 2t - 2 cos 3t - cos 4t
+  // t ∈ [0, 2π)
+  const pts = [];
+  for(let i=0;i<n;i++){
+    const t = (i/n) * Math.PI * 2;
+    const x = 16*Math.pow(Math.sin(t),3);
+    const y = 13*Math.cos(t) - 5*Math.cos(2*t) - 2*Math.cos(3*t) - Math.cos(4*t);
+    pts.push([x,y]);
+  }
+  // 归一化映射到屏幕：先计算范围
+  let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+  pts.forEach(([x,y])=>{minX=Math.min(minX,x);maxX=Math.max(maxX,x);minY=Math.min(minY,y);maxY=Math.max(maxY,y);});
+  const spanX = maxX-minX, spanY = maxY-minY;
 
-/** 生成所有不重叠的位置（随机顺序） */
-function buildPositions(){
-  const {cardW, cardH, rows, cols, originX, originY, jx, jy} = cfg;
-  const pos = [];
-  for(let r=0;r<rows;r++){
-    for(let c=0;c<cols;c++){
-      let x = originX + c * (cardW + GAP) + (Math.random()*2-1)*jx;
-      let y = originY + r * (cardH + GAP) + (Math.random()*2-1)*jy;
-      x = Math.max(GAP, Math.min(x, sw() - GAP - cardW));
-      y = Math.max(GAP, Math.min(y, sh() - GAP - cardH));
-      pos.push([x,y]);
-    }
-  }
-  // 洗牌
-  for(let i=pos.length-1;i>0;i--){
-    const j = Math.floor(Math.random()*(i+1));
-    [pos[i],pos[j]]=[pos[j],pos[i]];
-  }
-  positions = pos;
+  // 心形目标尺寸：占屏幕短边的 ~80%，再乘以一个比例让留白好看
+  const pad = 16;
+  const short = Math.min(sw(), sh());
+  const scale = (short*0.80 - pad*2) / Math.max(spanX, spanY);
+
+  const cx = sw()/2, cy = sh()/2 + 10; // 略微下移，视觉更居中
+  return pts.map(([x,y])=>{
+    // y 轴像素坐标向下为正，因此要取 -y
+    return [cx + (x - (minX+spanX/2))*scale, cy + (-(y - (minY+spanY/2))*scale)];
+  });
 }
 
-/** 生成带飘动动画的卡片 */
-function spawnOne(){
-  if(!positions.length){ timer=null; return; }
-  const [x,y] = positions.pop();
+/* 生成卡片 DOM */
+function spawnOne(pos, metrics){
+  const [x0,y0] = pos;
+  const x = x0 + (Math.random()*2-1)*JITTER;
+  const y = y0 + (Math.random()*2-1)*JITTER;
+
   const div = document.createElement('div');
   div.className = 'card';
-
-  // 自适应尺寸
-  div.style.width  = cfg.cardW + 'px';
-  div.style.height = cfg.cardH + 'px';
-  div.style.left   = x + 'px';
-  div.style.top    = y + 'px';
-  div.style.font   = `700 ${cfg.font}px/1.2 "PingFang SC","Microsoft YaHei",system-ui,sans-serif`;
-
-  // 外观
-  div.style.background = COLORS[Math.floor(Math.random()*COLORS.length)];
+  div.style.left = x + 'px';
+  div.style.top  = y + 'px';
+  div.style.width  = metrics.w + 'px';
+  div.style.height = metrics.h + 'px';
+  div.style.font   = `700 ${metrics.f}px/1.2 "PingFang SC","Microsoft YaHei",system-ui,sans-serif`;
+  div.style.background = PINKS[Math.floor(Math.random()*PINKS.length)];
   div.textContent = MESSAGES[Math.floor(Math.random()*MESSAGES.length)];
 
-  // —— 轻微飘动动画 —— //
-  const amp = (Math.random()*(FLOAT_AMP_MAX-FLOAT_AMP_MIN)+FLOAT_AMP_MIN).toFixed(1);
-  const dur = (Math.random()*(FLOAT_DUR_MAX-FLOAT_DUR_MIN)+FLOAT_DUR_MIN).toFixed(2);
-  div.style.setProperty('--amp', `-${amp}px`);          // 向上位移的幅度（负值）
-  div.style.animationDuration = `${dur}s`;              // 周期
-  div.style.animationDelay = `-${(Math.random()*dur).toFixed(2)}s`; // 随机相位
+  // 轻微飘动
+  const amp = (Math.random()*(AMP_MAX-AMP_MIN)+AMP_MIN).toFixed(1);
+  const dur = (Math.random()*(DUR_MAX-DUR_MIN)+DUR_MIN).toFixed(2);
+  div.style.setProperty('--amp', `-${amp}px`);
+  div.style.animationDuration = `${dur}s`;
+  div.style.animationDelay = `-${(Math.random()*dur).toFixed(2)}s`;
 
   stage.appendChild(div);
-
-  if(positions.length) timer = setTimeout(spawnOne, INTERVAL);
 }
 
-/** 初始化或在尺寸变化后重建布局 */
-function rebuild(){
-  if (timer) { clearTimeout(timer); timer = null; }
+/* 主流程：按爱心曲线依次出现 */
+function run(){
   stage.innerHTML = '';
-  cfg = layoutConfig();
-  buildPositions();
-  spawnOne();
+  const metrics = cardMetrics();
+  const path = heartPositions(COUNT);
+
+  let i = 0;
+  const tick = ()=>{
+    if(i >= path.length) return;
+    spawnOne(path[i], metrics);
+    i++;
+    if(i < path.length) setTimeout(tick, INTERVAL);
+  };
+  tick();
 }
 
-// 初始构建
-rebuild();
-
-// 方向/尺寸变化时自适应
-let resizeTO = null;
-window.addEventListener('resize', ()=>{
-  clearTimeout(resizeTO);
-  resizeTO = setTimeout(rebuild, 200); // 防抖
+/* 初始化与尺寸变化自适应 */
+run();
+let to=null;
+window.addEventListener('resize',()=>{
+  clearTimeout(to);
+  to = setTimeout(run, 200);
 });
 </script>
 </body>
