@@ -3,69 +3,154 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>满屏飘字 H5</title>
+<title>宝宝 我想你了</title>
 <style>
+  :root{ --gap:12px; }
   html,body,#stage{height:100%;margin:0}
-  #stage{position:relative;overflow:hidden;background:#111}
-  .card{
-    position:absolute;width:260px;height:70px;
-    border-radius:18px;background:#ffd; color:#222;
-    display:flex;align-items:center;justify-content:center;
-    font:700 14px/1.2 "PingFang SC","Microsoft YaHei",sans-serif;
-    box-shadow:0 6px 18px rgba(0,0,0,.25);
-    padding:8px;text-align:center
+  #stage{
+    position:relative;overflow:hidden;background:#111;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+             env(safe-area-inset-bottom) env(safe-area-inset-left);
   }
-  .hint{position:fixed;left:12px;bottom:10px;color:#888;font:12px/1.2 system-ui,sans-serif}
+  .card{
+    position:absolute;border-radius:18px;background:#ffd;color:#222;
+    display:flex;align-items:center;justify-content:center;text-align:center;
+    box-shadow:0 6px 18px rgba(0,0,0,.25);padding:8px;word-break:break-word;
+    will-change: transform;
+    /* 宽高/字体和动画参数由 JS 动态设置 */
+    animation-name: floatY;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
+    animation-direction: alternate;
+  }
+  @keyframes floatY{
+    from { transform: translate3d(0, 0, 0) }
+    to   { transform: translate3d(0, var(--amp, -10px), 0) } /* --amp 由 JS 设置，带单位 */
+  }
 </style>
 </head>
 <body>
 <div id="stage"></div>
-<div class="hint">Tip: 每 1s 出现一个卡片，直到铺满屏幕</div>
 <script>
-const MESSAGES = ["今天过得开心嘛","多喝水哦~","记得吃水果","早点休息","梦想成真","顺顺利利","愿所有烦恼都消失","保持微笑喔","金榜题名","期待下一次见面","我想你了","天冷了多穿衣","好好爱自己","加油呀！","好运常在","心想事成","早安～","晚安～","别熬夜","一路发光吧","保持开心","今天也要元气满满","冲鸭！"];
-const COLORS = ["#FFE4C4","#FFDEAD","#FFDAB9","#E6E6FA","#D8BFD8","#E0FFFF","#AFEEEE","#B0E0E6","#F0FFF0","#F5FFFA","#FFFACD","#F0E68C","#E6FFE6","#E0F7FA","#FCE4EC","#E8EAF6","#FFF0F5","#FFF8E1"];
-const CARD_W = 260, CARD_H = 70, INTERVAL = 200;
+/* ====== 可调参数 ====== */
+const MESSAGES = ["我想你了"];
+const COLORS   = ["#FFE4C4","#FFDEAD","#FFDAB9","#E6E6FA","#D8BFD8","#E0FFFF","#AFEEEE","#B0E0E6","#F0FFF0","#F5FFFA","#FFFACD","#F0E68C","#E6FFE6","#E0F7FA","#FCE4EC","#E8EAF6","#FFF0F5","#FFF8E1"];
+let   INTERVAL = 200; // 每隔多少毫秒弹一个（150~300 比较稳）
+const GAP = 12;       // 卡片间距（px）
+
+// 飘动参数（每张卡片随机一个范围）
+const FLOAT_AMP_MIN = 6;   // 最小幅度(px)
+const FLOAT_AMP_MAX = 14;  // 最大幅度(px)
+const FLOAT_DUR_MIN = 3.0; // 最短周期(s)
+const FLOAT_DUR_MAX = 6.0; // 最长周期(s)
+/* ===================== */
 
 const stage = document.getElementById('stage');
-const sw = () => stage.clientWidth, sh = () => stage.clientHeight;
-const cols = () => Math.max(1, Math.floor(sw()/CARD_W));
-const rows = () => Math.max(1, Math.floor(sh()/CARD_H));
-function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a;}
+const sw = () => stage.clientWidth;
+const sh = () => stage.clientHeight;
 
-function allPositions(){
-  const cs = cols(), rs = rows();
-  const ox = (sw() - cs*CARD_W)/2, oy = (sh() - rs*CARD_H)/2;
+/** 计算自适应布局参数 */
+function layoutConfig(){
+  const W = sw(), H = sh();
+
+  // 目标列数
+  let colsWanted = 2;               // 手机竖屏
+  if (W >= 430) colsWanted = 3;     // 大屏手机/横屏
+  if (W >= 768) colsWanted = 4;     // 平板
+  if (W >= 1024) colsWanted = 5;    // 桌面
+
+  // 卡片宽高 & 字体
+  const cardW = Math.floor((W - GAP * (colsWanted + 1)) / colsWanted);
+  const cardH = Math.max(56, Math.round(cardW * 0.27)); // 比例 ~ 260:70
+  const font  = Math.max(12, Math.round(cardW * 0.055));
+
+  // 行列
+  const rows = Math.max(1, Math.floor((H - GAP) / (cardH + GAP)));
+  const cols = colsWanted;
+
+  // 起始偏移（纵向尽量居中）
+  const originX = GAP;
+  const originY = Math.max(GAP, Math.floor((H - rows*(cardH+GAP) + GAP)/2));
+
+  // 轻微抖动
+  const jx = Math.floor(cardW * 0.06);
+  const jy = Math.floor(cardH * 0.12);
+
+  return {cardW, cardH, font, rows, cols, originX, originY, jx, jy};
+}
+
+let cfg = layoutConfig();
+let positions = [];
+let timer = null;
+
+/** 生成所有不重叠的位置（随机顺序） */
+function buildPositions(){
+  const {cardW, cardH, rows, cols, originX, originY, jx, jy} = cfg;
   const pos = [];
-  const jx = Math.floor(CARD_W/15), jy = Math.floor(CARD_H/15);
-  for(let r=0;r<rs;r++){
-    for(let c=0;c<cs;c++){
-      let x = ox + c*CARD_W + (Math.random()*2-1)*jx;
-      let y = oy + r*CARD_H + (Math.random()*2-1)*jy;
-      x = Math.max(0, Math.min(x, sw()-CARD_W));
-      y = Math.max(0, Math.min(y, sh()-CARD_H)); 
+  for(let r=0;r<rows;r++){
+    for(let c=0;c<cols;c++){
+      let x = originX + c * (cardW + GAP) + (Math.random()*2-1)*jx;
+      let y = originY + r * (cardH + GAP) + (Math.random()*2-1)*jy;
+      x = Math.max(GAP, Math.min(x, sw() - GAP - cardW));
+      y = Math.max(GAP, Math.min(y, sh() - GAP - cardH));
       pos.push([x,y]);
     }
   }
-  return shuffle(pos);
+  // 洗牌
+  for(let i=pos.length-1;i>0;i--){
+    const j = Math.floor(Math.random()*(i+1));
+    [pos[i],pos[j]]=[pos[j],pos[i]];
+  }
+  positions = pos;
 }
 
-let positions = allPositions();
+/** 生成带飘动动画的卡片 */
 function spawnOne(){
-  if(!positions.length) return;
+  if(!positions.length){ timer=null; return; }
   const [x,y] = positions.pop();
   const div = document.createElement('div');
   div.className = 'card';
-  div.style.left = x+'px';
-  div.style.top  = y+'px';
-  div.style.background = COLORS[Math.floor(Math.random()*COLORS.length)];
-  div.innerText = MESSAGES[Math.floor(Math.random()*MESSAGES.length)];
-  stage.appendChild(div);
-  if(positions.length) setTimeout(spawnOne, INTERVAL);
-}
-spawnOne();
 
-window.addEventListener('resize', () => {
-  if(!positions.length) positions = allPositions();
+  // 自适应尺寸
+  div.style.width  = cfg.cardW + 'px';
+  div.style.height = cfg.cardH + 'px';
+  div.style.left   = x + 'px';
+  div.style.top    = y + 'px';
+  div.style.font   = `700 ${cfg.font}px/1.2 "PingFang SC","Microsoft YaHei",system-ui,sans-serif`;
+
+  // 外观
+  div.style.background = COLORS[Math.floor(Math.random()*COLORS.length)];
+  div.textContent = MESSAGES[Math.floor(Math.random()*MESSAGES.length)];
+
+  // —— 轻微飘动动画 —— //
+  const amp = (Math.random()*(FLOAT_AMP_MAX-FLOAT_AMP_MIN)+FLOAT_AMP_MIN).toFixed(1);
+  const dur = (Math.random()*(FLOAT_DUR_MAX-FLOAT_DUR_MIN)+FLOAT_DUR_MIN).toFixed(2);
+  div.style.setProperty('--amp', `-${amp}px`);          // 向上位移的幅度（负值）
+  div.style.animationDuration = `${dur}s`;              // 周期
+  div.style.animationDelay = `-${(Math.random()*dur).toFixed(2)}s`; // 随机相位
+
+  stage.appendChild(div);
+
+  if(positions.length) timer = setTimeout(spawnOne, INTERVAL);
+}
+
+/** 初始化或在尺寸变化后重建布局 */
+function rebuild(){
+  if (timer) { clearTimeout(timer); timer = null; }
+  stage.innerHTML = '';
+  cfg = layoutConfig();
+  buildPositions();
+  spawnOne();
+}
+
+// 初始构建
+rebuild();
+
+// 方向/尺寸变化时自适应
+let resizeTO = null;
+window.addEventListener('resize', ()=>{
+  clearTimeout(resizeTO);
+  resizeTO = setTimeout(rebuild, 200); // 防抖
 });
 </script>
 </body>
