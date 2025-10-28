@@ -42,7 +42,7 @@ function allPositions(){
       let x = ox + c*CARD_W + (Math.random()*2-1)*jx;
       let y = oy + r*CARD_H + (Math.random()*2-1)*jy;
       x = Math.max(0, Math.min(x, sw()-CARD_W));
-      y = Math.max(0, Math.min(y, sh()-CARD_H));
+      y = Math.max(0, Math.min(y, sh()-CARD_H)); 
       pos.push([x,y]);
     }
   }
