@@ -17,9 +17,9 @@
     display:flex;align-items:center;justify-content:center;text-align:center;
     box-shadow:0 6px 18px rgba(0,0,0,.25);padding:8px;word-break:break-word;
     will-change:transform;white-space:nowrap;
+    transform:translate3d(-50%,-50%,0); /* 以中心定位 */
     animation-name:floatY;animation-timing-function:ease-in-out;
     animation-iteration-count:infinite;animation-direction:alternate;
-    transform:translate3d(-50%,-50%,0); /* 以中心点定位 */
   }
   @keyframes floatY{
     from{ transform:translate3d(-50%,-50%,0) }
@@ -30,113 +30,126 @@
 <body>
 <div id="stage"></div>
 <script>
-/* ===== 可调参数 ===== */
+/* ===== 可调参数（重点看这几个） ===== */
 const MESSAGES = [
-  "宝宝 我想你了"
+  "宝宝 我想你了","你别不理我","我真的很想你","为什么这么久不理我","我想你了","好爱你呀"
 ];
-// 粉色系（从浅到深，不同饱和度）
-const PINKS = [
-  "#fff0f5","#ffe4ec","#ffd6e7","#ffc6db","#ffb3cf","#ffa0c4",
-  "#ff8fb8","#ff7dad","#ff6aa1","#ff578f","#ff437e","#ff2e6f"
-];
-let   INTERVAL = 200;     // 每隔多少毫秒出现一个
-const COUNT    = 40;      // 想出现多少张卡片（沿心形曲线均匀取点）
-const JITTER   = 10;      // 每个点的随机抖动像素（允许轻微重叠）
-/* 漂浮动画参数（每张卡片随机） */
-const AMP_MIN=6, AMP_MAX=14, DUR_MIN=3.0, DUR_MAX=6.0;
-/* ==================== */
+const PINKS = ["#ffeaf0","#ffdce7","#ffccde","#ffbfd6","#ffaecb","#ff9fbe","#ff90b3","#ff81a8","#ff729d","#ff648f"];
+let   INTERVAL = 180;   // 出现速度（毫秒）
+const JITTER   = 6;     // 每点微抖动，越小越规整
+const GAP_FACTOR = 0.8; // 轮廓相邻卡片的最小间距系数（基于卡片宽度，0.8~1.2之间调）
+/* 漂浮 */
+const AMP_MIN=6, AMP_MAX=12, DUR_MIN=3.0, DUR_MAX=5.0;
+/* =============================== */
 
 const stage = document.getElementById('stage');
 const sw = ()=>stage.clientWidth, sh = ()=>stage.clientHeight;
 
-/* 根据屏幕计算卡片大小与字体（相对缩放，适配手机/平板） */
+/* 自适应卡片尺寸 */
 function cardMetrics(){
   const m = Math.min(sw(), sh());
-  const w = Math.max(90, Math.min(140, Math.round(m*0.28))); // ~页面短边的28%，夹在90~140之间
-  const h = Math.max(36, Math.round(w*0.3));
-  const f = Math.max(12, Math.round(w*0.15));                // 字体随宽度
+  const w = Math.max(90, Math.min(140, Math.round(m*0.28)));
+  const h = Math.max(36, Math.round(w*0.30));
+  const f = Math.max(12, Math.round(w*0.15));
   return {w,h,f};
 }
 
-/* 心形曲线（经典参数式）并归一化到屏幕中心 */
-function heartPositions(n){
-  // 心形参数方程：
-  // x = 16 sin^3 t
-  // y = 13 cos t - 5 cos 2t - 2 cos 3t - cos 4t
-  // t ∈ [0, 2π)
-  const pts = [];
-  for(let i=0;i<n;i++){
-    const t = (i/n) * Math.PI * 2;
-    const x = 16*Math.pow(Math.sin(t),3);
-    const y = 13*Math.cos(t) - 5*Math.cos(2*t) - 2*Math.cos(3*t) - Math.cos(4*t);
-    pts.push([x,y]);
-  }
-  // 归一化映射到屏幕：先计算范围
-  let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
-  pts.forEach(([x,y])=>{minX=Math.min(minX,x);maxX=Math.max(maxX,x);minY=Math.min(minY,y);maxY=Math.max(maxY,y);});
-  const spanX = maxX-minX, spanY = maxY-minY;
-
-  // 心形目标尺寸：占屏幕短边的 ~80%，再乘以一个比例让留白好看
-  const pad = 16;
-  const short = Math.min(sw(), sh());
-  const scale = (short*0.80 - pad*2) / Math.max(spanX, spanY);
-
-  const cx = sw()/2, cy = sh()/2 + 10; // 略微下移，视觉更居中
-  return pts.map(([x,y])=>{
-    // y 轴像素坐标向下为正，因此要取 -y
-    return [cx + (x - (minX+spanX/2))*scale, cy + (-(y - (minY+spanY/2))*scale)];
-  });
+/* 心形参数方程 */
+function heartXY(t){
+  const x = 16*Math.pow(Math.sin(t),3);
+  const y = 13*Math.cos(t) - 5*Math.cos(2*t) - 2*Math.cos(3*t) - Math.cos(4*t);
+  return [x,y];
 }
 
-/* 生成卡片 DOM */
-function spawnOne(pos, metrics){
+/* 生成“外轮廓等弧长点”：保证相邻点像素距离 >= minDist */
+function heartOutline(minDist){
+  // 先采样足够密的点，再按像素弧长抽样
+  const dense = [];
+  const N = 1200;  // 越大轮廓越平滑
+  for(let i=0;i<N;i++){
+    const t = i/N * Math.PI*2;
+    dense.push(heartXY(t));
+  }
+  // 标准化到屏幕
+  let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+  for(const [x,y] of dense){ if(x<minX)minX=x; if(x>maxX)maxX=x; if(y<minY)minY=y; if(y>maxY)maxY=y; }
+  const spanX = maxX-minX, spanY = maxY-minY;
+  const short = Math.min(sw(), sh());
+  const scale = (short*0.78) / Math.max(spanX, spanY); // 78% 的短边
+  const cx = sw()/2, cy = sh()/2 + 8;
+
+  const pts = dense.map(([x,y])=>[
+    cx + (x - (minX+spanX/2))*scale,
+    cy + (-(y - (minY+spanY/2))*scale)
+  ]);
+
+  // 按像素弧长采样
+  const out = [];
+  let last = null, acc = 0;
+  for(let i=0;i<pts.length;i++){
+    const p = pts[i], q = pts[(i+1)%pts.length];
+    if(!last){ out.push(p); last = p; continue; }
+    const dx = p[0]-last[0], dy = p[1]-last[1];
+    const d  = Math.hypot(dx,dy);
+    acc += d;
+    if(acc >= minDist){
+      out.push(p); last = p; acc = 0;
+    }
+  }
+  return out;
+}
+
+/* 生成卡片 */
+function addCard(pos, metrics){
   const [x0,y0] = pos;
   const x = x0 + (Math.random()*2-1)*JITTER;
   const y = y0 + (Math.random()*2-1)*JITTER;
 
-  const div = document.createElement('div');
-  div.className = 'card';
-  div.style.left = x + 'px';
-  div.style.top  = y + 'px';
-  div.style.width  = metrics.w + 'px';
-  div.style.height = metrics.h + 'px';
-  div.style.font   = `700 ${metrics.f}px/1.2 "PingFang SC","Microsoft YaHei",system-ui,sans-serif`;
-  div.style.background = PINKS[Math.floor(Math.random()*PINKS.length)];
-  div.textContent = MESSAGES[Math.floor(Math.random()*MESSAGES.length)];
+  const el = document.createElement('div');
+  el.className = 'card';
+  el.style.left = x+'px';
+  el.style.top  = y+'px';
+  el.style.width  = metrics.w+'px';
+  el.style.height = metrics.h+'px';
+  el.style.font   = `700 ${metrics.f}px/1.2 "PingFang SC","Microsoft YaHei",system-ui,sans-serif`;
+  el.style.background = PINKS[Math.floor(Math.random()*PINKS.length)];
+  el.textContent = MESSAGES[Math.floor(Math.random()*MESSAGES.length)];
 
-  // 轻微飘动
+  // 随机轻微旋转（更自然）
+  const rot = (Math.random()*6 - 3).toFixed(1); // -3° ~ 3°
+  el.style.transform += ` rotate(${rot}deg)`;
+
+  // 飘动
   const amp = (Math.random()*(AMP_MAX-AMP_MIN)+AMP_MIN).toFixed(1);
   const dur = (Math.random()*(DUR_MAX-DUR_MIN)+DUR_MIN).toFixed(2);
-  div.style.setProperty('--amp', `-${amp}px`);
-  div.style.animationDuration = `${dur}s`;
-  div.style.animationDelay = `-${(Math.random()*dur).toFixed(2)}s`;
+  el.style.setProperty('--amp', `-${amp}px`);
+  el.style.animationDuration = `${dur}s`;
+  el.style.animationDelay = `-${(Math.random()*dur).toFixed(2)}s`;
 
-  stage.appendChild(div);
+  stage.appendChild(el);
 }
 
-/* 主流程：按爱心曲线依次出现 */
+/* 主流程：只沿轮廓等距放置，几乎不重叠 */
 function run(){
   stage.innerHTML = '';
   const metrics = cardMetrics();
-  const path = heartPositions(COUNT);
+  const minDist = metrics.w * GAP_FACTOR; // 控制轮廓间距的关键
+  const outline = heartOutline(minDist);
 
   let i = 0;
   const tick = ()=>{
-    if(i >= path.length) return;
-    spawnOne(path[i], metrics);
+    if(i >= outline.length) return;
+    addCard(outline[i], metrics);
     i++;
-    if(i < path.length) setTimeout(tick, INTERVAL);
+    if(i < outline.length) setTimeout(tick, INTERVAL);
   };
   tick();
 }
 
-/* 初始化与尺寸变化自适应 */
+/* 初始化与自适应 */
 run();
 let to=null;
-window.addEventListener('resize',()=>{
-  clearTimeout(to);
-  to = setTimeout(run, 200);
-});
+window.addEventListener('resize',()=>{ clearTimeout(to); to=setTimeout(run,200); });
 </script>
 </body>
 </html>
